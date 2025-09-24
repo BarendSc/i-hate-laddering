@@ -13,7 +13,7 @@
     * { box-sizing: border-box; }
     body { margin: 0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); }
     .container-inner {max-width: 1100px; margin: 0 auto; padding: 0 20px;}
-    header { padding: 20px 24px; border-bottom: 1px solid #1f2632; }
+    header { padding: 20px 0; border-bottom: 1px solid #1f2632; }
     h1 { margin: 0; font-weight: 800; letter-spacing: .2px; font-size: 20px; }
     main { max-width: 1100px; margin: 0 auto; padding: 20px; display: grid; grid-template-columns: 1.1fr .9fr; gap: 16px; }
     .card { background: var(--card); border: 1px solid #1f2632; border-radius: 14px; box-shadow: 0 4px 24px rgba(0,0,0,.25); }
@@ -44,15 +44,15 @@
   </style>
 </head>
 <body>
-<div class="container">
-    <header style="margin-bottom:20px;">
-      <div class="container-inner">
-        <div style="display:flex; align-items:center; gap:12px;">
-          <img src="changsoup.png" alt="MapleStory Live" style="height:180px; border-radius:8px;">
-          <h1 style="margin:0;">The streets know laddering is bad design</h1>
-        </div>
+  <header>
+    <div class="container-inner">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <img src="changsoup.png" alt="MapleStory Live" style="height:180px; border-radius:8px;">
+        <h1 style="margin:0;">The streets know laddering is bad design</h1>
       </div>
-    </header>
+    </div>
+  </header>
+
   <main>
     <section class="card">
       <h2>Inputs</h2>
@@ -67,9 +67,17 @@
               <label>Spare offset (SPARE = MAIN + offset)</label>
               <input id="spareOffset" type="number" value="1" min="1" max="5" />
             </div>
-            <div style="min-width: 180px;">
+            <div style="min-width: 240px;">
               <label>New SPARE starts at ★</label>
               <input id="newSpareStart" type="number" value="12" min="0" max="30" />
+              <div class="mt8" style="display:flex; align-items:center; gap:8px;">
+                <label class="pill" style="display:flex; align-items:center; gap:6px;">
+                  <input id="relativeRepair" type="checkbox" />
+                  Relative repair star
+                </label>
+                <input id="relativeDelta" type="number" value="0" min="0" max="30" style="width:90px;" />
+              </div>
+              <small class="muted">When checked: new SPARE = (boom ★) − (delta) for both MAIN & SPARE booms</small>
             </div>
             <div style="min-width: 180px;">
               <label>Max star cap</label>
@@ -77,6 +85,7 @@
             </div>
           </div>
         </div>
+
         <div class="mb12 grid2">
           <div>
             <label>Flags</label>
@@ -133,6 +142,7 @@
       </div>
     </section>
   </main>
+
   <footer>
     Tip: host this file as <code>index.html</code> on GitHub Pages (Settings → Pages → deploy from main).
   </footer>
@@ -143,7 +153,9 @@ function rand() { return Math.random(); }
 
 // --- KMS cost functions (exact port of your JS) ---
 function makeMesoFn(divisor, currentStarExp = 2.7, extraMult = 1) {
-  return (currentStar, itemLevel) => 100 * Math.round(extraMult * itemLevel ** 3 * ((currentStar + 1) ** currentStarExp) / divisor + 10);
+  return (currentStar, itemLevel) => 100 * Math.round(
+    extraMult * itemLevel ** 3 * ((currentStar + 1) ** currentStarExp) / divisor + 10
+  );
 }
 function preSaviorMesoFn(current_star) {
   if (current_star >= 15) return makeMesoFn(20000);
@@ -226,7 +238,11 @@ function attemptOnce(current_star, item_level, flags, rates){
   return [cost, outcome];
 }
 
-function performLadderOnce(start_main_star, spares_count, item_level, flags, rates, new_spare_start_star, spare_offset, max_star_cap){
+function performLadderOnce(
+  start_main_star, spares_count, item_level, flags, rates,
+  new_spare_start_star, spare_offset, max_star_cap,
+  relativeRepairEnabled = false, relativeRepairDelta = 0
+){
   let total = 0;
   let mainStar = start_main_star|0;
   let spareStar = start_main_star|0;
@@ -244,12 +260,26 @@ function performLadderOnce(start_main_star, spares_count, item_level, flags, rat
     while (spareStar < targetSpare && canContinue()){
       const [cost, outcome] = attemptOnce(spareStar, item_level, flags, rates);
       total += cost;
-      if (outcome === 'Success') spareStar += 1;
-      else if (outcome === 'Maintain') {/*no-op*/}
-      else if (outcome === 'Boom'){
-        spareBoomStars.push(spareStar);
-        if (sparesLeft <= 0) return { total_mesos: total, final_main_star: mainStar, spares_left: sparesLeft, main_boom_stars: mainBoomStars, spare_boom_stars: spareBoomStars };
-        sparesLeft -= 1; spareStar = new_spare_start_star|0;
+      if (outcome === 'Success') {
+        spareStar += 1;
+      } else if (outcome === 'Maintain') {
+        // no-op
+      } else if (outcome === 'Boom') {
+        const boomAt = spareStar; // record SPARE boom star
+        spareBoomStars.push(boomAt);
+        if (sparesLeft <= 0) {
+          return { total_mesos: total, final_main_star: mainStar, spares_left: sparesLeft, main_boom_stars: mainBoomStars, spare_boom_stars: spareBoomStars };
+        }
+        sparesLeft -= 1;
+
+        // Rebuild SPARE after SPARE boom (relative if enabled)
+        if (relativeRepairEnabled) {
+          let start = Math.max(0, boomAt - (relativeRepairDelta | 0));
+          if (max_star_cap != null) start = Math.min(start, max_star_cap | 0);
+          spareStar = start | 0;
+        } else {
+          spareStar = new_spare_start_star | 0;
+        }
       }
     }
 
@@ -257,15 +287,31 @@ function performLadderOnce(start_main_star, spares_count, item_level, flags, rat
 
     // Push MAIN up to SPARE (end if boom)
     while (mainStar < spareStar && canContinue()){
+      const boomAttemptStar = mainStar; // record MAIN attempt star
       const [cost, outcome] = attemptOnce(mainStar, item_level, flags, rates);
       total += cost;
-      if (outcome === 'Success') mainStar += 1;
-      else if (outcome === 'Maintain') {/*no-op*/}
-      else if (outcome === 'Boom'){
-        mainBoomStars.push(mainStar);
-        mainStar = spareStar; // promote
-        if (sparesLeft <= 0) return { total_mesos: total, final_main_star: mainStar, spares_left: sparesLeft, main_boom_stars: mainBoomStars, spare_boom_stars: spareBoomStars };
-        sparesLeft -= 1; spareStar = new_spare_start_star|0; break;
+      if (outcome === 'Success') {
+        mainStar += 1;
+      } else if (outcome === 'Maintain') {
+        // no-op
+      } else if (outcome === 'Boom') {
+        mainBoomStars.push(boomAttemptStar);
+        // promote SPARE to MAIN
+        mainStar = spareStar;
+        if (sparesLeft <= 0) {
+          return { total_mesos: total, final_main_star: mainStar, spares_left: sparesLeft, main_boom_stars: mainBoomStars, spare_boom_stars: spareBoomStars };
+        }
+        sparesLeft -= 1;
+
+        // Create NEW SPARE after MAIN boom (relative if enabled)
+        if (relativeRepairEnabled) {
+          let start = Math.max(0, boomAttemptStar - (relativeRepairDelta | 0));
+          if (max_star_cap != null) start = Math.min(start, max_star_cap | 0);
+          spareStar = start | 0;
+        } else {
+          spareStar = new_spare_start_star | 0;
+        }
+        break; // back to outer loop to rebuild SPARE to MAIN+offset
       }
     }
   }
@@ -273,10 +319,10 @@ function performLadderOnce(start_main_star, spares_count, item_level, flags, rat
   return { total_mesos: total, final_main_star: mainStar, spares_left: sparesLeft, main_boom_stars: mainBoomStars, spare_boom_stars: spareBoomStars };
 }
 
-function repeatLadder(trials, start_main_star, spares_count, item_level, flags, rates, new_spare_start_star, spare_offset, max_star_cap){
+function repeatLadder(trials, start_main_star, spares_count, item_level, flags, rates, new_spare_start_star, spare_offset, max_star_cap, relativeRepairEnabled=false, relativeRepairDelta=0){
   const results = []; const costs = []; const finalStars = []; const mainBooms = []; const spareBooms = [];
   for (let i=0;i<trials;i++){
-    const r = performLadderOnce(start_main_star, spares_count, item_level, flags, rates, new_spare_start_star, spare_offset, max_star_cap);
+    const r = performLadderOnce(start_main_star, spares_count, item_level, flags, rates, new_spare_start_star, spare_offset, max_star_cap, relativeRepairEnabled, relativeRepairDelta);
     results.push(r); costs.push(r.total_mesos); finalStars.push(r.final_main_star);
     mainBooms.push(...r.main_boom_stars); spareBooms.push(...r.spare_boom_stars);
   }
@@ -286,7 +332,7 @@ function repeatLadder(trials, start_main_star, spares_count, item_level, flags, 
   return { avg, med, mx, mn, results, finalStars, mainBooms, spareBooms };
 }
 
-function repeatPortfolio(trials, items, flags, rates, new_spare_start_star, spare_offset, max_star_cap){
+function repeatPortfolio(trials, items, flags, rates, new_spare_start_star, spare_offset, max_star_cap, relativeRepairEnabled=false, relativeRepairDelta=0){
   if (items.length < 1 || items.length > 20) throw new Error('items must be 1..20');
   const totals = []; const perItemCosts = {}; const perItemFinal = {}; const perItemMainBoom = {}; const perItemSpareBoom = {};
   items.forEach(it=>{ perItemCosts[it.name]=[]; perItemFinal[it.name]={}; perItemMainBoom[it.name]={}; perItemSpareBoom[it.name]={}; });
@@ -296,7 +342,12 @@ function repeatPortfolio(trials, items, flags, rates, new_spare_start_star, spar
   for(let t=0;t<trials;t++){
     let total = 0;
     for(const it of items){
-      const r = performLadderOnce(it.start, it.spares, it.level, flags, rates, (new_spare_start_star??it.start), spare_offset, max_star_cap);
+      const r = performLadderOnce(
+        it.start, it.spares, it.level, flags, rates,
+        (new_spare_start_star ?? it.start),
+        spare_offset, max_star_cap,
+        relativeRepairEnabled, relativeRepairDelta
+      );
       total += r.total_mesos;
       perItemCosts[it.name].push(r.total_mesos);
       bump(perItemFinal[it.name], r.final_main_star);
@@ -344,7 +395,6 @@ function addRow(pref={name:'', start:22, spares:5, level:150}){
 
 addRow({name:'slime', start:22, spares:10, level:160});
 addRow({name:'daybreak', start:22, spares:5, level:140});
-
 addRowBtn.onclick = ()=> addRow();
 
 function readFlags(){
@@ -376,10 +426,17 @@ runBtn.onclick = ()=>{
   const spareOffset = parseInt(document.getElementById('spareOffset').value,10)||1;
   const newSpareStart = parseInt(document.getElementById('newSpareStart').value,10)||12;
   const maxStarCap = parseInt(document.getElementById('maxStarCap').value,10)||30;
+  const relativeRepair = document.getElementById('relativeRepair').checked;
+  const relativeDelta  = parseInt(document.getElementById('relativeDelta').value, 10) || 0;
+
   const flags = readFlags();
   const items = readItems();
 
-  const res = repeatPortfolio(trials, items, flags, kmsRates, newSpareStart, spareOffset, maxStarCap);
+  const res = repeatPortfolio(
+    trials, items, flags, kmsRates,
+    newSpareStart, spareOffset, maxStarCap,
+    relativeRepair, relativeDelta
+  );
 
   document.getElementById('avgTotal').textContent = fmt(res.avgTotal);
   document.getElementById('medTotal').textContent = fmt(res.medTotal);
@@ -439,6 +496,5 @@ runBtn.onclick = ()=>{
   });
 };
 </script>
-  </div>
 </body>
 </html>
