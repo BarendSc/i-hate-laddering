@@ -78,6 +78,16 @@
                 <input id="relativeDelta" type="number" value="0" min="0" max="30" style="width:90px;" />
               </div>
               <small class="muted">When checked: new SPARE = (boom ★) − (delta) for both MAIN & SPARE booms</small>
+
+              <div class="mt8" style="display:flex; align-items:center; gap:8px;">
+                <label class="pill" style="display:flex; align-items:center; gap:6px;">
+                  <input id="gmsRepair" type="checkbox" />
+                  GMS repair
+                </label>
+              </div>
+              <small class="muted">
+                When checked: repair star depends on boom ★ (15–19→12, 20→15, 21–22→17, 23–25→19, 26+→20)
+              </small>
             </div>
             <div style="min-width: 180px;">
               <label>Max star cap</label>
@@ -148,10 +158,10 @@
   </footer>
 
 <script>
-// --- RNG helper (JS Math.random is fine) ---
+// --- RNG helper ---
 function rand() { return Math.random(); }
 
-// --- KMS cost functions (exact port of your JS) ---
+// --- KMS cost functions ---
 function makeMesoFn(divisor, currentStarExp = 2.7, extraMult = 1) {
   return (currentStar, itemLevel) => 100 * Math.round(
     extraMult * itemLevel ** 3 * ((currentStar + 1) ** currentStarExp) / divisor + 10
@@ -179,14 +189,29 @@ function kmsCost(current_star, item_level) { return kmsMesoFn(current_star)(curr
 
 // --- KMS rates ---
 const kmsRates = {
-  0:[0.95,0.05,0,0],1:[0.9,0.1,0,0],2:[0.85,0.15,0,0],3:[0.85,0.15,0,0],4:[0.8,0.2,0,0],5:[0.75,0.25,0,0],6:[0.7,0.3,0,0],7:[0.65,0.35,0,0],8:[0.6,0.4,0,0],9:[0.55,0.45,0,0],10:[0.5,0.5,0,0],11:[0.45,0.55,0,0],12:[0.4,0.6,0,0],13:[0.35,0.65,0,0],14:[0.3,0.7,0,0],15:[0.3,0.679,0,0.021],16:[0.3,0.679,0,0.021],17:[0.15,0.782,0,0.068],18:[0.15,0.782,0,0.068],19:[0.15,0.765,0,0.085],20:[0.3,0.595,0,0.105],21:[0.15,0.7225,0,0.1275],22:[0.15,0.68,0,0.17],23:[0.1,0.72,0,0.18],24:[0.1,0.72,0,0.18],25:[0.1,0.72,0,0.18],26:[0.07,0.744,0,0.186],27:[0.05,0.76,0,0.19],28:[0.03,0.776,0,0.194],29:[0.01,0.792,0,0.198]
+  0:[0.95,0.05,0,0],1:[0.9,0.1,0,0],2:[0.85,0.15,0,0],3:[0.85,0.15,0,0],4:[0.8,0.2,0,0],5:[0.75,0.25,0,0],
+  6:[0.7,0.3,0,0],7:[0.65,0.35,0,0],8:[0.6,0.4,0,0],9:[0.55,0.45,0,0],10:[0.5,0.5,0,0],11:[0.45,0.55,0,0],
+  12:[0.4,0.6,0,0],13:[0.35,0.65,0,0],14:[0.3,0.7,0,0],15:[0.3,0.679,0,0.021],16:[0.3,0.679,0,0.021],
+  17:[0.15,0.782,0,0.068],18:[0.15,0.782,0,0.068],19:[0.15,0.765,0,0.085],20:[0.3,0.595,0,0.105],
+  21:[0.15,0.7225,0,0.1275],22:[0.15,0.68,0,0.17],23:[0.1,0.72,0,0.18],24:[0.1,0.72,0,0.18],
+  25:[0.1,0.72,0,0.18],26:[0.07,0.744,0,0.186],27:[0.05,0.76,0,0.19],28:[0.03,0.776,0,0.194],29:[0.01,0.792,0,0.198]
 };
 
-// --- Safeguard multiplier increase (JS port) ---
+// --- Safeguard multiplier ---
 function getSafeguardMultiplierIncrease(current_star, sauna, server) {
   if (server === 'kms' && current_star >= 15 && current_star <= 17) return 2;
   if (server === 'old' && !sauna && current_star >= 12 && current_star <= 16) return 1;
   if (server !== 'kms' && current_star >= 15 && current_star <= 16) return 1;
+  return 0;
+}
+
+// --- GMS repair mapping ---
+function gmsRepairStar(boomAt) {
+  if (boomAt >= 15 && boomAt <= 19) return 12;
+  if (boomAt === 20) return 15;
+  if (boomAt === 21 || boomAt === 22) return 17;
+  if (boomAt >= 23 && boomAt <= 25) return 19;
+  if (boomAt >= 26) return 20;
   return 0;
 }
 
@@ -207,17 +232,13 @@ function attemptCost(current_star, item_level, flags){
 
 function determineOutcome(current_star, rates, flags){
   let [pSucc, pMaint, pDecr, pBoom] = rates[current_star];
-  // KMS: enforce no decrease
   pDecr = 0;
-  // KMS boom event: shift 30% of boom prob to maintain up to 21★
   if (flags.boom_event && current_star <= 21){
     pMaint += pBoom * 0.3; pBoom *= 0.7;
   }
-  // Safeguard (KMS): convert boom to maintain up to 17★
   if (flags.boom_protect && current_star <= 17){
     pMaint += pBoom; pBoom = 0;
   }
-  // Star catch: +5% success, renormalize rest
   if (flags.star_catch){
     pSucc *= 1.05; const left = Math.max(0, 1 - pSucc); const rest = pMaint + pDecr + pBoom;
     if (rest > 0){ pMaint = pMaint * left / rest; pDecr = pDecr * left / rest; pBoom = pBoom * left / rest; }
@@ -249,31 +270,26 @@ function performLadderOnce(
   let sparesLeft = spares_count|0;
   const mainBoomStars = [];
   const spareBoomStars = [];
-  if (new_spare_start_star == null) new_spare_start_star = start_main_star;
   const canContinue = () => max_star_cap == null ? true : (mainStar < max_star_cap);
 
   while (canContinue()){
-    let targetSpare = mainStar + spare_offset;
-    if (max_star_cap != null) targetSpare = Math.min(targetSpare, max_star_cap);
+    let targetSpare = Math.min(mainStar + spare_offset, max_star_cap);
 
-    // Build SPARE up to MAIN + offset
+    // Build SPARE up
     while (spareStar < targetSpare && canContinue()){
       const [cost, outcome] = attemptOnce(spareStar, item_level, flags, rates);
       total += cost;
-      if (outcome === 'Success') {
-        spareStar += 1;
-      } else if (outcome === 'Maintain') {
-        // no-op
-      } else if (outcome === 'Boom') {
-        const boomAt = spareStar; // record SPARE boom star
+      if (outcome === 'Success') spareStar += 1;
+      else if (outcome === 'Boom') {
+        const boomAt = spareStar;
         spareBoomStars.push(boomAt);
-        if (sparesLeft <= 0) {
+        if (sparesLeft <= 0)
           return { total_mesos: total, final_main_star: mainStar, spares_left: sparesLeft, main_boom_stars: mainBoomStars, spare_boom_stars: spareBoomStars };
-        }
         sparesLeft -= 1;
 
-        // Rebuild SPARE after SPARE boom (relative if enabled)
-        if (relativeRepairEnabled) {
+        if (flags.gms_repair) {
+          spareStar = gmsRepairStar(boomAt);
+        } else if (relativeRepairEnabled) {
           let start = Math.max(0, boomAt - (relativeRepairDelta | 0));
           if (max_star_cap != null) start = Math.min(start, max_star_cap | 0);
           spareStar = start | 0;
@@ -285,33 +301,29 @@ function performLadderOnce(
 
     if (!canContinue()) break;
 
-    // Push MAIN up to SPARE (end if boom)
+    // Push MAIN up
     while (mainStar < spareStar && canContinue()){
-      const boomAttemptStar = mainStar; // record MAIN attempt star
+      const boomAttemptStar = mainStar;
       const [cost, outcome] = attemptOnce(mainStar, item_level, flags, rates);
       total += cost;
-      if (outcome === 'Success') {
-        mainStar += 1;
-      } else if (outcome === 'Maintain') {
-        // no-op
-      } else if (outcome === 'Boom') {
+      if (outcome === 'Success') mainStar += 1;
+      else if (outcome === 'Boom') {
         mainBoomStars.push(boomAttemptStar);
-        // promote SPARE to MAIN
         mainStar = spareStar;
-        if (sparesLeft <= 0) {
+        if (sparesLeft <= 0)
           return { total_mesos: total, final_main_star: mainStar, spares_left: sparesLeft, main_boom_stars: mainBoomStars, spare_boom_stars: spareBoomStars };
-        }
         sparesLeft -= 1;
 
-        // Create NEW SPARE after MAIN boom (relative if enabled)
-        if (relativeRepairEnabled) {
+        if (flags.gms_repair) {
+          spareStar = gmsRepairStar(boomAttemptStar);
+        } else if (relativeRepairEnabled) {
           let start = Math.max(0, boomAttemptStar - (relativeRepairDelta | 0));
           if (max_star_cap != null) start = Math.min(start, max_star_cap | 0);
           spareStar = start | 0;
         } else {
           spareStar = new_spare_start_star | 0;
         }
-        break; // back to outer loop to rebuild SPARE to MAIN+offset
+        break;
       }
     }
   }
@@ -319,181 +331,122 @@ function performLadderOnce(
   return { total_mesos: total, final_main_star: mainStar, spares_left: sparesLeft, main_boom_stars: mainBoomStars, spare_boom_stars: spareBoomStars };
 }
 
-function repeatLadder(trials, start_main_star, spares_count, item_level, flags, rates, new_spare_start_star, spare_offset, max_star_cap, relativeRepairEnabled=false, relativeRepairDelta=0){
-  const results = []; const costs = []; const finalStars = []; const mainBooms = []; const spareBooms = [];
-  for (let i=0;i<trials;i++){
-    const r = performLadderOnce(start_main_star, spares_count, item_level, flags, rates, new_spare_start_star, spare_offset, max_star_cap, relativeRepairEnabled, relativeRepairDelta);
-    results.push(r); costs.push(r.total_mesos); finalStars.push(r.final_main_star);
-    mainBooms.push(...r.main_boom_stars); spareBooms.push(...r.spare_boom_stars);
-  }
-  const avg = Math.round(costs.reduce((a,b)=>a+b,0)/trials);
-  const med = costs.slice().sort((a,b)=>a-b)[Math.floor(trials/2)];
-  const mx = Math.max(...costs), mn = Math.min(...costs);
-  return { avg, med, mx, mn, results, finalStars, mainBooms, spareBooms };
-}
-
 function repeatPortfolio(trials, items, flags, rates, new_spare_start_star, spare_offset, max_star_cap, relativeRepairEnabled=false, relativeRepairDelta=0){
-  if (items.length < 1 || items.length > 20) throw new Error('items must be 1..20');
-  const totals = []; const perItemCosts = {}; const perItemFinal = {}; const perItemMainBoom = {}; const perItemSpareBoom = {};
+  const totals=[]; const perItemCosts={}; const perItemFinal={}; const perItemMainBoom={}; const perItemSpareBoom={};
   items.forEach(it=>{ perItemCosts[it.name]=[]; perItemFinal[it.name]={}; perItemMainBoom[it.name]={}; perItemSpareBoom[it.name]={}; });
-
   const bump=(obj,k)=>obj[k]=(obj[k]||0)+1;
-
   for(let t=0;t<trials;t++){
-    let total = 0;
+    let total=0;
     for(const it of items){
-      const r = performLadderOnce(
-        it.start, it.spares, it.level, flags, rates,
-        (new_spare_start_star ?? it.start),
-        spare_offset, max_star_cap,
-        relativeRepairEnabled, relativeRepairDelta
-      );
-      total += r.total_mesos;
+      const r=performLadderOnce(it.start,it.spares,it.level,flags,rates,(new_spare_start_star??it.start),spare_offset,max_star_cap,relativeRepairEnabled,relativeRepairDelta);
+      total+=r.total_mesos;
       perItemCosts[it.name].push(r.total_mesos);
-      bump(perItemFinal[it.name], r.final_main_star);
-      r.main_boom_stars.forEach(s=>bump(perItemMainBoom[it.name], s));
-      r.spare_boom_stars.forEach(s=>bump(perItemSpareBoom[it.name], s));
+      bump(perItemFinal[it.name],r.final_main_star);
+      r.main_boom_stars.forEach(s=>bump(perItemMainBoom[it.name],s));
+      r.spare_boom_stars.forEach(s=>bump(perItemSpareBoom[it.name],s));
     }
     totals.push(total);
   }
-  const avgTotal = Math.round(totals.reduce((a,b)=>a+b,0)/trials);
-  const medTotal = totals.slice().sort((a,b)=>a-b)[Math.floor(trials/2)];
-  const mx = Math.max(...totals), mn = Math.min(...totals);
-
-  const perItemAvg={}, perItemMed={};
+  const avgTotal=Math.round(totals.reduce((a,b)=>a+b,0)/trials);
+  const medTotal=totals.slice().sort((a,b)=>a-b)[Math.floor(trials/2)];
+  const mx=Math.max(...totals),mn=Math.min(...totals);
+  const perItemAvg={},perItemMed={};
   for(const nm in perItemCosts){
-    const arr = perItemCosts[nm];
+    const arr=perItemCosts[nm];
     perItemAvg[nm]=Math.round(arr.reduce((a,b)=>a+b,0)/arr.length);
     perItemMed[nm]=arr.slice().sort((a,b)=>a-b)[Math.floor(arr.length/2)];
   }
-
-  return { avgTotal, medTotal, mx, mn, totals, perItemFinal, perItemMainBoom, perItemSpareBoom, perItemAvg, perItemMed };
+  return {avgTotal,medTotal,mx,mn,totals,perItemFinal,perItemMainBoom,perItemSpareBoom,perItemAvg,perItemMed};
 }
 
-function histToPct(hist, denom){ const out={}; for(const k in hist){ out[k]= +(hist[k]*100/denom).toFixed(2); } return out; }
-function fmt(n){ return n.toLocaleString('en-US'); }
+function histToPct(hist,denom){const out={};for(const k in hist){out[k]=+(hist[k]*100/denom).toFixed(2);}return out;}
+function fmt(n){return n.toLocaleString('en-US');}
 
-// --- UI wiring ---
-const rowsEl = document.getElementById('rows');
-const addRowBtn = document.getElementById('addRow');
-const runBtn = document.getElementById('runBtn');
-const perItemEl = document.getElementById('perItem');
+// --- UI ---
+const rowsEl=document.getElementById('rows');
+const addRowBtn=document.getElementById('addRow');
+const runBtn=document.getElementById('runBtn');
+const perItemEl=document.getElementById('perItem');
 let chart;
-
-function addRow(pref={name:'', start:22, spares:5, level:150}){
-  const row = document.createElement('div'); row.className='row card'; row.style.padding='10px';
-  row.innerHTML = `
-    <div><label>Name</label><input value="${pref.name}" class="nm" placeholder="slime"/></div>
-    <div><label>Main start ★</label><input type="number" value="${pref.start}" min="0" max="30" class="start"/></div>
-    <div><label>Spares</label><input type="number" value="${pref.spares}" min="0" max="999" class="spares"/></div>
-    <div><label>Item level</label><input type="number" value="${pref.level}" min="1" max="300" class="level"/></div>
-    <div><button class="btn small del">✕</button></div>
-  `;
-  row.querySelector('.del').onclick = ()=> row.remove();
+function addRow(pref={name:'',start:22,spares:5,level:150}){
+  const row=document.createElement('div');row.className='row card';row.style.padding='10px';
+  row.innerHTML=`<div><label>Name</label><input value="${pref.name}" class="nm" placeholder="slime"/></div>
+  <div><label>Main start ★</label><input type="number" value="${pref.start}" min="0" max="30" class="start"/></div>
+  <div><label>Spares</label><input type="number" value="${pref.spares}" min="0" max="999" class="spares"/></div>
+  <div><label>Item level</label><input type="number" value="${pref.level}" min="1" max="300" class="level"/></div>
+  <div><button class="btn small del">✕</button></div>`;
+  row.querySelector('.del').onclick=()=>row.remove();
   rowsEl.appendChild(row);
 }
-
-addRow({name:'slime', start:22, spares:10, level:160});
-addRow({name:'daybreak', start:22, spares:5, level:140});
-addRowBtn.onclick = ()=> addRow();
+addRow({name:'slime',start:22,spares:10,level:160});
+addRow({name:'daybreak',start:22,spares:5,level:140});
+addRowBtn.onclick=()=>addRow();
 
 function readFlags(){
-  const mvp = [...document.querySelectorAll('input[name="mvp"]')].find(r=>r.checked)?.value || 'none';
+  const mvp=[...document.querySelectorAll('input[name="mvp"]')].find(r=>r.checked)?.value||'none';
   return {
-    server: 'kms', item_type: 'normal', sauna:false,
-    boom_event: document.getElementById('boomEvent').checked,
-    thirty_off: document.getElementById('thirtyOff').checked,
-    boom_protect: document.getElementById('boomProtect').checked,
-    star_catch: document.getElementById('starCatch').checked,
+    server:'kms',item_type:'normal',sauna:false,
+    boom_event:document.getElementById('boomEvent').checked,
+    thirty_off:document.getElementById('thirtyOff').checked,
+    boom_protect:document.getElementById('boomProtect').checked,
+    star_catch:document.getElementById('starCatch').checked,
+    gms_repair:document.getElementById('gmsRepair').checked,
     mvp
   };
 }
-
 function readItems(){
   const items=[];
   rowsEl.querySelectorAll('.row').forEach(row=>{
-    const name = row.querySelector('.nm').value.trim()||'item';
-    const start = parseInt(row.querySelector('.start').value,10)||0;
-    const spares = parseInt(row.querySelector('.spares').value,10)||0;
-    const level = parseInt(row.querySelector('.level').value,10)||1;
-    items.push({name, start, spares, level});
+    const name=row.querySelector('.nm').value.trim()||'item';
+    const start=parseInt(row.querySelector('.start').value,10)||0;
+    const spares=parseInt(row.querySelector('.spares').value,10)||0;
+    const level=parseInt(row.querySelector('.level').value,10)||1;
+    items.push({name,start,spares,level});
   });
   return items;
 }
-
-runBtn.onclick = ()=>{
-  const trials = parseInt(document.getElementById('trials').value,10)||100;
-  const spareOffset = parseInt(document.getElementById('spareOffset').value,10)||1;
-  const newSpareStart = parseInt(document.getElementById('newSpareStart').value,10)||12;
-  const maxStarCap = parseInt(document.getElementById('maxStarCap').value,10)||30;
-  const relativeRepair = document.getElementById('relativeRepair').checked;
-  const relativeDelta  = parseInt(document.getElementById('relativeDelta').value, 10) || 0;
-
-  const flags = readFlags();
-  const items = readItems();
-
-  const res = repeatPortfolio(
-    trials, items, flags, kmsRates,
-    newSpareStart, spareOffset, maxStarCap,
-    relativeRepair, relativeDelta
-  );
-
-  document.getElementById('avgTotal').textContent = fmt(res.avgTotal);
-  document.getElementById('medTotal').textContent = fmt(res.medTotal);
-  document.getElementById('rngTotal').textContent = `${fmt(res.mn)} – ${fmt(res.mx)}`;
-
-  // Per-item panels
-  perItemEl.innerHTML = '';
-  const labels = []; const data = [];
+runBtn.onclick=()=>{
+  const trials=parseInt(document.getElementById('trials').value,10)||100;
+  const spareOffset=parseInt(document.getElementById('spareOffset').value,10)||1;
+  const newSpareStart=parseInt(document.getElementById('newSpareStart').value,10)||12;
+  const maxStarCap=parseInt(document.getElementById('maxStarCap').value,10)||30;
+  const relativeRepair=document.getElementById('relativeRepair').checked;
+  const relativeDelta=parseInt(document.getElementById('relativeDelta').value,10)||0;
+  const flags=readFlags();
+  const items=readItems();
+  const res=repeatPortfolio(trials,items,flags,kmsRates,newSpareStart,spareOffset,maxStarCap,relativeRepair,relativeDelta);
+  document.getElementById('avgTotal').textContent=fmt(res.avgTotal);
+  document.getElementById('medTotal').textContent=fmt(res.medTotal);
+  document.getElementById('rngTotal').textContent=`${fmt(res.mn)} – ${fmt(res.mx)}`;
+  perItemEl.innerHTML='';
+  const labels=[];const data=[];
   items.forEach(it=>{
-    const wrap = document.createElement('div'); wrap.className='card mt16';
-    const finalPct = histToPct(res.perItemFinal[it.name], trials);
-    const mainPct  = histToPct(res.perItemMainBoom[it.name], trials);
-    const sparePct = histToPct(res.perItemSpareBoom[it.name], trials);
-
-    // Build simple tables
-    wrap.innerHTML = `
-      <h2 style="padding:10px 12px;">${it.name}</h2>
-      <div class="content">
-        <table class="mb12">
-          <tbody>
-            <tr><th>Avg mesos</th><td class="right">${fmt(res.perItemAvg[it.name])}</td></tr>
-            <tr><th>Median mesos</th><td class="right">${fmt(res.perItemMed[it.name])}</td></tr>
-          </tbody>
-        </table>
-        <div class="grid2">
-          <div>
-            <label>Final star %</label>
-            <div class="muted">${Object.entries(finalPct).map(([k,v])=>`★${k}: ${v}%`).join(' · ')||'—'}</div>
-            <div class="mt8"><label>Main boom %</label>
-            <div class="muted">${Object.entries(mainPct).map(([k,v])=>`★${k}: ${v}%`).join(' · ')||'—'}</div></div>
-            <div class="mt8"><label>Spare boom %</label>
-            <div class="muted">${Object.entries(sparePct).map(([k,v])=>`★${k}: ${v}%`).join(' · ')||'—'}</div></div>
-          </div>
-          <div>
-            <small class="muted">(Top final-star bucket shown in chart)</small>
-            <div class="mt8"></div>
-          </div>
-        </div>
-      </div>`;
-
+    const wrap=document.createElement('div');wrap.className='card mt16';
+    const finalPct=histToPct(res.perItemFinal[it.name],trials);
+    const mainPct=histToPct(res.perItemMainBoom[it.name],trials);
+    const sparePct=histToPct(res.perItemSpareBoom[it.name],trials);
+    wrap.innerHTML=`<h2 style="padding:10px 12px;">${it.name}</h2><div class="content">
+      <table class="mb12"><tbody>
+        <tr><th>Avg mesos</th><td class="right">${fmt(res.perItemAvg[it.name])}</td></tr>
+        <tr><th>Median mesos</th><td class="right">${fmt(res.perItemMed[it.name])}</td></tr>
+      </tbody></table>
+      <div class="grid2"><div>
+        <label>Final star %</label>
+        <div class="muted">${Object.entries(finalPct).map(([k,v])=>`★${k}: ${v}%`).join(' · ')||'—'}</div>
+        <div class="mt8"><label>Main boom %</label>
+        <div class="muted">${Object.entries(mainPct).map(([k,v])=>`★${k}: ${v}%`).join(' · ')||'—'}</div></div>
+        <div class="mt8"><label>Spare boom %</label>
+        <div class="muted">${Object.entries(sparePct).map(([k,v])=>`★${k}: ${v}%`).join(' · ')||'—'}</div></div>
+      </div><div><small class="muted">(Top final-star bucket shown in chart)</small><div class="mt8"></div></div></div></div>`;
     perItemEl.appendChild(wrap);
-
-    // collect for global chart: top final star for each item (by count)
-    const final = res.perItemFinal[it.name];
-    const top = Object.entries(final).sort((a,b)=>b[1]-a[1])[0];
-    labels.push(it.name);
-    data.push(top ? Number(top[0]) : 0);
+    const final=res.perItemFinal[it.name];
+    const top=Object.entries(final).sort((a,b)=>b[1]-a[1])[0];
+    labels.push(it.name);data.push(top?Number(top[0]):0);
   });
-
-  // Simple bar chart: item vs most common final star
-  const ctx = document.getElementById('finalStarChart');
-  if (chart) chart.destroy();
-  chart = new Chart(ctx, {
-    type: 'bar',
-    data: { labels, datasets: [{ label: 'Most common final star', data }] },
-    options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, ticks:{ precision:0 } } } }
-  });
+  const ctx=document.getElementById('finalStarChart');
+  if(chart)chart.destroy();
+  chart=new Chart(ctx,{type:'bar',data:{labels,datasets:[{label:'Most common final star',data}]},
+    options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});
 };
 </script>
 </body>
